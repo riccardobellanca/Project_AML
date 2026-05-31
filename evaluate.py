@@ -54,6 +54,7 @@ def main():
     print(f"[INFO] Device: {device}")
 
     # ---- Load checkpoint ----
+    saved_args = {}
     if not args.baseline_only:
         assert args.checkpoint, "Must provide --checkpoint unless --baseline_only is used"
         ckpt = torch.load(args.checkpoint, map_location=device)
@@ -62,10 +63,9 @@ def main():
         if args.layer == -1 and "layer" in saved_args:
             args.layer = saved_args["layer"]
     else:
-        model_name = args.backbone if args.backbone else saved_args.get("backbone", "dinov2_vitb14")
+        model_name = args.backbone if args.backbone else "dinov2_vitb14"
         print(f"[INFO] BASELINE MODE: Testing pure {model_name} without training/PEFT!")
         ckpt = {}
-        saved_args = {}
 
     model_name = args.backbone if args.backbone else saved_args.get("backbone", "dinov2_vitb14")
     

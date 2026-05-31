@@ -1,4 +1,4 @@
-# Project 5 — Semantic Correspondence with DINOv2 + LoRA
+# Parameter-Efficient Adaptation of DINOv2 for Sub-Pixel Semantic Correspondence
 
 > **Advanced Machine Learning — A.Y. 2025/2026**  
 > Politecnico di Torino
@@ -18,9 +18,7 @@
 
 ## 🎯 Task Description
 
-**Semantic Correspondence** is the problem of matching pixels across images that depict the same *semantic concept* (e.g., the eye of a Chihuahua → the eye of a Husky), even when the two images differ in appearance, viewpoint, or background.
-
-Given an image pair $(I_A, I_B)$ and a set of source keypoints in $I_A$, the goal is to predict the corresponding keypoints in $I_B$.
+**Semantic Correspondence** aims to establish dense pixel-level matches between images depicting semantically related objects under severe viewpoint, scale, and appearance variations. This project specializes the **DINOv2** visual foundation model to achieve robust, sub-pixel accurate alignments with minimal parameter overhead.
 
 ---
 
@@ -28,194 +26,51 @@ Given an image pair $(I_A, I_B)$ and a set of source keypoints in $I_A$, the goa
 
 ```
 Project_AML/
-├── dataloaders/                 # Python code for data loading
-│   ├── __init__.py
-│   ├── download_spair.py        # Script to download SPair-71k
-│   ├── download_pfpascal.py     # Script to download PF-Pascal
-│   ├── spair.py                 # SPairDataset class
-│   └── pfpascal.py              # PFPascalDataset class
-│
-├── models/
-│   ├── extractor.py             # DINOv2 feature extractor
-│   ├── lora.py                  # LoRA implementation
-│   └── correspondence.py        # Cost volume + Adaptive Window + SAM
-│
-├── utils/
-│   ├── metrics.py               # PCK@α evaluation
-│   ├── matching.py              # Cost volume & NN matching
-│   ├── visualization.py         # Drawing matches & heatmaps
-│   ├── adaptive_window.py       # ★ Adaptive Window Soft-Argmax
-│   ├── curriculum.py            # ★ Curriculum Learning sampler
-│   ├── segment_aware.py         # ★ SAM masking
-│   └── demo_utils.py            # ★ Gradio Demos (Comparison, Robustness, SAM)
-│
-├── data/                        # Datasets (SPair-71k, PF-Pascal)
-├── checkpoints/                 # Saved model weights
+├── dataloaders/                 # Data loading scripts (SPair-71k, PF-Pascal)
+├── models/                      # DINOv2 Extractor, LoRA & Correspondence models
+├── utils/                       # Metrics, Soft-Argmax, Curriculum & SAM masking
 ├── train.py                     # Training entry point
-├── evaluate.py                  # Evaluation on SPair/Pascal
-├── ablate_temperature.py        # Ablation study on softmax temperature
-├── Notebook_training_eval.ipynb # Development notebook
-├── requirements.txt
+├── evaluate.py                  # Evaluation entry point
 └── README.md
 ```
 
 ---
 
-## 📦 Setup
-
-```bash
-# 1. Create and activate a conda environment
-conda create -n sem_corr python=3.10 -y
-conda activate sem_corr
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Download the datasets
-python dataloaders/download_spair.py --root ./data
-python dataloaders/download_pfpascal.py --root ./data
-
-# 4. (Optional) For Segment-Aware: install SAM and download weights
-pip install git+https://github.com/facebookresearch/segment-anything.git
-# Download sam_vit_b_01ec64.pth to project root
-```
-
----
-
-## 📊 Datasets
-
-### SPair-71k
-[SPair-71k](https://cvlab.postech.ac.kr/research/SPair-71k/) is the standard benchmark for semantic correspondence.
-- **18** categories, **70k** pairs.
-- Metadata (viewpoint, scale, etc.) used for **Curriculum Learning**.
-
-### PF-Pascal
-[PF-Pascal](https://www.di.ens.fr/willow/research/proposalflow/) is a smaller, classic benchmark.
-- **20** Pascal VOC categories.
-- Used for cross-dataset validation and robustness testing.
-
----
-
 ## 🧠 Approach
 
-### 1. Feature Extraction — DINOv2
-We use **DINOv2** (ViT-B/14) as the backbone. Its dense patch features encode rich semantic structure learned via self-supervised training.
+### 1. Backbone & PEFT Adaptation (LoRA & BitFit)
+We adopt a pre-trained **DINOv2 (ViT-B/14)** backbone. To specialize the representations without full fine-tuning, we explore:
+- **Low-Rank Adaptation (LoRA)**: Injects trainable low-rank matrices into attention projections ($\Delta W = BA$ with rank $r=16$), optimizing only $1.03\%$ of the backbone.
+- **BitFit**: Updates solely the network’s bias parameters, optimizing a mere $0.09\%$ of parameters.
 
-### 2. Parameter-Efficient Fine-Tuning — LoRA
-Since DINOv2 has ~86M parameters, we use **LoRA (Low-Rank Adaptation)** to fine-tune only ~1% of the parameters by inserting trainable low-rank bypass matrices into every attention layer:
+### 2. Curriculum Learning
+To prevent gradient instability, we dynamically rank training pairs by scale, truncation, and viewpoint difficulty using SPair-71k metadata. A linear pacing function progressively introduces harder transformations over the first 10 epochs.
 
-$$W' = W + \Delta W = W + BA, \quad B \in \mathbb{R}^{d \times r},\ A \in \mathbb{R}^{r \times d}$$
-
-with rank $r \ll d$ (default $r=16$).
-
-### 3. ★ Curriculum Learning (`utils/curriculum.py`)
-Instead of training on all pairs from the start, we rank pairs by difficulty using SPair-71k metadata (viewpoint + scale + truncation variation) and expose progressively harder examples:
-
-- **Epoch 1**: only the 30% easiest pairs (similar pose, same scale)
-- **Linear ramp**: difficulty increases over `--curriculum_epochs` epochs
-- **After ramp**: all pairs used (standard training)
-
-### 4. Dense Matching + Cost Volume
-For each source keypoint, we gather its similarity row from the cosine-similarity cost volume $(B \times N_s \times N_t)$ and find the best matching position in the target.
-
-### 5. ★ Adaptive Window Soft-Argmax (`utils/adaptive_window.py`)
-Instead of a fixed-size window or plain argmax, we compute the **Shannon entropy** of the similarity distribution:
-
-- **Low entropy** (confident/sharp peak) → small window radius → precise sub-pixel localisation
-- **High entropy** (flat/uncertain) → large window radius → wider exploration
-
-The window radius is linearly interpolated between `aw_min_radius` and `aw_max_radius` based on entropy.
-
-### 6. ★ Segment-Aware Correspondence (`utils/segment_aware.py`)
-We integrate **SAM (Segment Anything Model)** to restrict matching to the target object:
-
-1. SAM generates a binary mask for the target image using the keypoint location as a prompt.
-2. The mask is downsampled to feature-grid resolution $(h \times w)$.
-3. Cost-volume columns outside the mask are set to $-\infty$ before soft-argmax.
-
-This eliminates false positives in cluttered scenes.
+### 3. Inference Refinement Pipeline
+- **Global Segment-Aware Masking (SAM)**: Eliminates background false positives by setting similarity scores outside SAM-generated target masks to $-\infty$.
+- **Local Adaptive Window Soft-Argmax**: Mitigates coarse-grid quantization errors. It dynamically scales the soft-argmax search window based on the Shannon entropy of the match probability, achieving differentiable, continuous sub-pixel accuracy.
 
 ---
 
 ## 📐 Evaluation — PCK
 
-**Percentage of Correct Keypoints (PCK)** at threshold $\alpha$:
-
-$$\text{PCK}@\alpha = \frac{1}{N} \sum_{i=1}^{N} \mathbf{1}\left[\|\hat{p}_i - p_i\| \leq \alpha \cdot \max(H, W)\right]$$
-
-We report **PCK@0.1** and **PCK@0.05**, both globally and per category.
-
----
-
-## 🚀 Training
-
-**Standard run (GPU — tutte le estensioni abilitate):**
-```bash
-python train.py \
-    --dataset_root ./data/SPair-71k \
-    --backbone dinov2_vitb14 \
-    --lora_rank 16 \
-    --epochs 20 \
-    --curriculum_epochs 10 \
-    --curriculum_start_frac 0.3 \
-    --aw_min_radius 2 \
-    --aw_max_radius 7 \
-    --output_dir ./checkpoints
-```
-
-**Quick test (CPU, 1 epoch, verifica che tutto funzioni):**
-```bash
-python train.py \
-    --dataset_root ./data/SPair-71k \
-    --epochs 1 \
-    --batch_size 4 \
-    --curriculum_epochs 0 \
-    --num_workers 0
-```
-
-**Disable specific extensions:**
-```bash
-# No curriculum (train on all pairs from epoch 1)
-python train.py ... --curriculum_epochs 0
-
-# No adaptive windowing (use plain hard-argmax)
-python train.py ... --no_adaptive_win
-```
-
----
-
-## 🧪 Evaluation
-
-```bash
-python evaluate.py \
-    --dataset_root ./data/SPair-71k \
-    --checkpoint ./checkpoints/best.pth \
-    --alpha 0.1
-```
-
----
-
-## 🎮 Interactive Demos
-
-We provide several interactive Gradio demos in `utils/demo_utils.py`, primarily designed for use in Jupyter Notebooks/Colab:
-
-- **Comparison Demo**: Side-by-side comparison between the Baseline and our fine-tuned model.
-- **Robustness Demo**: Test how the model handles arbitrary geometric rotations.
-- **Segment-Aware Demo**: Visualise how SAM-based masking improves matching precision.
-
-To launch them in a notebook:
-```python
-from utils.demo_utils import launch_comparison_demo
-launch_comparison_demo(ckpt_name='my_best_model')
-```
+We measure matching accuracy using the **Percentage of Correct Keypoints (PCK)**, evaluating at both standard ($\alpha=0.1$) and strict localization ($\alpha=0.05$) thresholds across:
+- **SPair-71k**: Primary training and evaluation benchmark.
+- **PF-Pascal**: Used to verify zero-shot cross-dataset generalization.
 
 ---
 
 ## 📚 References
 
-- Oquab et al. (2023). *DINOv2: Learning Robust Visual Features without Supervision.* [arXiv:2304.07193](https://arxiv.org/abs/2304.07193)
-- Hu et al. (2021). *LoRA: Low-Rank Adaptation of Large Language Models.* [arXiv:2106.09685](https://arxiv.org/abs/2106.09685)
-- Min et al. (2019). *SPair-71k: A Large-scale Benchmark for Semantic Correspondence.* [arXiv:1908.10543](https://arxiv.org/abs/1908.10543)
-- Kirillov et al. (2023). *Segment Anything.* [arXiv:2304.02643](https://arxiv.org/abs/2304.02643)
-- Bengio et al. (2009). *Curriculum Learning.* ICML.
-- Zhang et al. (2024). *Tale of Two Features: Stable Diffusion Complemented by ViT-based Features for Semantic Correspondence.* CVPR.
+1. Mahmoud Assran, Mathilde Caron, Ishan Misra, Piotr Bojanowski, Florian Bordes, Pascal Vincent, Armand Joulin, Michael Rabbat, and Nicolas Ballas. *Self-supervised learning from images with a joint-embedding predictive architecture.* In CVPR, 2023.
+2. Elad Ben Zaken, Shauli Ravfogel, and Yoav Goldberg. *Bitfit: Simple parameter-efficient fine-tuning for transformer-based masked language-models.* 2022.
+3. Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. *Curriculum learning.* In Proceedings of the 26th annual international conference on machine learning, pages 41–48, 2009.
+4. Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Dídac Surís, Chaitanya K Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, et al. *Sam 3: Segment anything with concepts.* arXiv preprint arXiv:2511.16719, 2025.
+5. Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Dollár, and Ross Girshick. *Masked autoencoders are scalable vision learners.* In CVPR, 2022.
+6. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. *Lora: Low-rank adaptation of large language models.* In ICLR, 2022.
+7. Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer Whitehead, Alexander C Berg, Wan-Yen Lo, et al. *Segment anything.* In ICCV, 2023.
+8. Juhong Min, Jongmin Lee, Jean Ponce, and Minsu Cho. *Spair-71k: A large-scale benchmark for semantic correspondence.* In ICCV, 2019.
+9. Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Hervé Soyer, Vighnesh Yashar, et al. *Dinov2: Learning robust visual features without supervision.* arXiv preprint arXiv:2304.07193, 2023.
+10. Luming Tang, Menglin Jia, Qianqian Wang, Cheng Perng Phoo, and Bharath Hariharan. *Emergent correspondence from image diffusion.* In NeurIPS, 2023.
+11. Junyi Zhang, Charles Herrmann, Junhwa Jun, Richard Wood, Koray Kavukcuoglu, et al. *A tale of two features: Stable diffusion complements dino for zero-shot semantic correspondence.* In NeurIPS, 2023.
+12. Junyi Zhang, Charles Herrmann, Junhwa Jun, Richard Wood, and Koray Kavukcuoglu. *Telling left from right: Identifying geometry-aware semantic correspondence.* In CVPR, 2024.
