@@ -13,7 +13,15 @@
 
 ## 🎯 Task Description
 
-This paper presents a modular pipeline optimizing **DINOv2** for sub-pixel semantic correspondence through **LoRA** and **Curriculum Learning**. To resolve background clutter and quantization errors, it pairs **SAM**-based masking with a novel entropy-driven **Adaptive Window Soft-Argmax** for superior precision.
+This paper presents a modular pipeline designed to optimize the DINOv2 foundation model for high-precision, sub-pixel semantic correspondence. W
+
+hile off-the-shelf features from large vision models capture general semantic similarities, they natively lack task-specific specialization, struggle in cluttered environments, and introduce severe spatial quantization errors when restricted to rigid feature grids.  To overcome these structural limitations, the proposed framework introduces a series of highly effective advancements across both training and inference stages: 
+- Parameter-Efficient Fine-Tuning (PEFT): The architecture avoids computationally prohibitive full fine-tuning by integrating Low-Rank Adaptation (LoRA) specifically into the transformer’s attention layers. This strategy requires optimizing only a minimal parameter footprint (1.036% of the backbone) while specializing the dense feature representations for spatial matching.
+- Curriculum Learning Strategy: To stabilize the optimization trajectory and mitigate gradient explosions, training image pairs from the SPair-71k dataset are ranked by difficulty metadata (scale, viewpoint, and truncation). The model is progressively exposed to harder transformations, which effectively halves the total training time.
+- Global Segment-Aware Masking: At inference time, the pipeline leverages the Segment Anything Model (SAM) as a zero-shot, plug-and-play segmenter. By masking irrelevant background regions directly within the similarity matrix, the framework completely suppresses out-of-context false positives.
+- Local Adaptive Window Soft-Argmax: To eliminate local quantization errors and achieve fully differentiable sub-pixel accuracy, a novel entropy-driven soft-argmax rule is introduced. By computing the Shannon entropy of the similarity heatmap, the method dynamically scales the refinement search radius—shrinking the window for confident peaks and expanding it under uncertainty.
+
+Evaluated on the challenging SPair-71k benchmark, this comprehensive approach dramatically surpasses the zero-shot baseline. Furthermore, downstream testing confirms strong cross-dataset generalization to the PF-Pascal dataset and exceptional robustness against severe synthetic geometric rotations.
 
 ---
 
