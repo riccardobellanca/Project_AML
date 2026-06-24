@@ -7,18 +7,13 @@
 
 ## 👥 Team
 
-| Name | Student ID |
-|------|-----------|
-| Johnprice Osagie | s344613 |
-| Mario Lapadula | s338300 |
-| Giorgia Pugliese | s344683 |
-| Riccardo Bellanca | s346229 |
+| Johnprice Osagie | Mario Lapadula | Giorgia Pugliese | Riccardo Bellanca |
 
 ---
 
 ## 🎯 Task Description
 
-**Semantic Correspondence** aims to establish dense pixel-level matches between images depicting semantically related objects under severe viewpoint, scale, and appearance variations. This project specializes the **DINOv2** visual foundation model to achieve robust, sub-pixel accurate alignments with minimal parameter overhead.
+This paper presents a modular pipeline optimizing **DINOv2** for sub-pixel semantic correspondence through **LoRA** and **Curriculum Learning**. To resolve background clutter and quantization errors, it pairs **SAM**-based masking with a novel entropy-driven **Adaptive Window Soft-Argmax** for superior precision.
 
 ---
 
