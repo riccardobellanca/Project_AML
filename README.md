@@ -32,6 +32,7 @@ Project_AML/
 ├── dataloaders/                 # Data loading scripts (SPair-71k, PF-Pascal)
 ├── models/                      # DINOv2 Extractor, LoRA & Correspondence models
 ├── utils/                       # Metrics, Soft-Argmax, Curriculum & SAM masking
+├── paper/                       # Paper PDF
 ├── train.py                     # Training entry point
 ├── evaluate.py                  # Evaluation entry point
 └── README.md
